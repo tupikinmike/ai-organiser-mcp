@@ -25,15 +25,31 @@ AUTH / MULTI-USER MODEL
   token from its environment variable AI_ORGANISER_INTEGRATION_TOKEN.
   This is mainly for development / single-user setups.
 
-WHEN TO CALL
-- Only call ai_organiser_save when the user clearly asks to save something, e.g.:
+STRICT TOOL CALL CONDITIONS
+- You MUST call ai_organiser_save ONLY if ALL of the following are true:
+  1) The LATEST user message explicitly contains the word "сохрани"
+     (any case, e.g. "Сохрани", "сохрани", "СОХРАНИ"),
+     or the English word "save" (e.g. "save this", "Save to project health").
+  2) There is already at least one previous ASSISTANT message that contains
+     the content to save.
+- If the user does NOT explicitly say "сохрани" or "save" in their last message,
+  DO NOT call ai_organiser_save.
+- Never guess or assume that the user wants to save something implicitly.
+- Examples when you MUST NOT call the tool:
+  - "напиши мне привет"
+  - "составь план тренировки"
+  - "перепиши текст более коротко"
+  - any greeting or question without the word "сохрани" or "save".
+
+WHEN TO CALL (EXAMPLES)
+- Allowed examples:
   - "сохрани это"
   - "сохрани в библиотеку"
   - "сохрани в проект здоровье"
   - "save this"
   - "save this to the library"
   - "save this to project X"
-- If the user did not mention saving, DO NOT call this tool.
+- In all other cases, do not call this tool.
 
 WHAT TO SAVE
 - When the user says "сохрани это" / "save this":
@@ -63,7 +79,8 @@ SECURITY / PRIVACY
 
 SUPABASE_FUNCTION_URL = "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/quick-add"
 
-# Публичный anon key Supabase (можно держать в коде, но лучше вынести в env)
+# Публичный anon key Supabase (по твоему описанию можно держать в коде,
+# но в проде лучше вынести в переменную окружения).
 SUPABASE_ANON_KEY = (
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
     "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyem93c2Z3dXJndGNkeGp3ZXZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMxMDUyMTYsImV4cCI6MjA3ODY4MTIxNn0."
@@ -120,6 +137,12 @@ def ai_organiser_save(
 ) -> dict:
     """
     Save a text message to AI Organiser as a note.
+
+    IMPORTANT:
+    - Call this tool ONLY if the LATEST user message explicitly contains
+      the word "сохрани" (Russian) or "save" (English).
+    - Never call this tool for greetings, questions or any messages
+      that do not explicitly ask to save something.
 
     - integration token берётся:
         1) из query-параметра ?token=... MCP URL,
@@ -201,7 +224,7 @@ def ai_organiser_save(
 
 
 if __name__ == "__main__":
-    # Это на случай, если Render запускает просто `python server.py`
+    # Для Render: слушаем порт из env и путь /mcp
     port = int(os.getenv("PORT", "8000"))
     mcp.run(
         transport="streamable-http",
