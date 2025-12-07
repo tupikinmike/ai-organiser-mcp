@@ -129,6 +129,40 @@ def _resolve_integration_token() -> str | None:
     return token
 
 
+def _looks_like_greeting_or_too_short(text: str) -> bool:
+    """
+    Простая защита от бессмысленных сохранений:
+    - очень короткий текст
+    - типичные приветствия
+    """
+    if not text:
+        return True
+
+    stripped = text.strip()
+    # короткий текст, типа "Привет!" – не сохраняем
+    if len(stripped) < 40:
+        # дополнительно отсекаем классические приветствия
+        lowered = stripped.lower()
+        common_greetings = [
+            "привет",
+            "привет!",
+            "привет))",
+            "привет)",
+            "hi",
+            "hi!",
+            "hello",
+            "hello!",
+            "здравствуй",
+            "здравствуйте",
+        ]
+        if lowered in common_greetings:
+            return True
+        # и в целом любой текст короче 40 символов считаем подозрительным
+        return True
+
+    return False
+
+
 @mcp.tool
 def ai_organiser_save(
     body: str,
@@ -170,6 +204,17 @@ def ai_organiser_save(
                 "as ?token=YOUR_TOKEN or in the server environment "
                 f"variable {INTEGRATION_TOKEN_ENV_VAR}."
             ),
+        }
+
+    # Защита от кривых вызовов типа "Привет!"
+    if _looks_like_greeting_or_too_short(body or ""):
+        return {
+            "saved": False,
+            "skipped": True,
+            "reason": "Text is too short or looks like a greeting; "
+                      "ai_organiser_save should only be called when the user "
+                      'explicitly asks to "save" some meaningful content.',
+            "body_preview": (body or "")[:160],
         }
 
     payload: dict = {
