@@ -1,4 +1,5 @@
 import os
+import re
 import httpx
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
@@ -25,31 +26,40 @@ AUTH / MULTI-USER MODEL
   token from its environment variable AI_ORGANISER_INTEGRATION_TOKEN.
   This is mainly for development / single-user setups.
 
-STRICT TOOL CALL CONDITIONS
-- You MUST call ai_organiser_save ONLY if ALL of the following are true:
-  1) The LATEST user message explicitly contains the word "сохрани"
-     (any case, e.g. "Сохрани", "сохрани", "СОХРАНИ"),
-     or the English word "save" (e.g. "save this", "Save to project health").
-  2) There is already at least one previous ASSISTANT message that contains
-     the content to save.
-- If the user does NOT explicitly say "сохрани" or "save" in their last message,
-  DO NOT call ai_organiser_save.
-- Never guess or assume that the user wants to save something implicitly.
-- Examples when you MUST NOT call the tool:
-  - "напиши мне привет"
-  - "составь план тренировки"
-  - "перепиши текст более коротко"
-  - any greeting or question without the word "сохрани" or "save".
+STRICT CALL & PARSING RULES (SERVER-ENFORCED)
+- The client MUST pass the exact latest user message as `user_message_raw`.
+- The server inspects user_message_raw and applies these rules:
 
-WHEN TO CALL (EXAMPLES)
-- Allowed examples:
+  1) If user_message_raw does NOT contain the word "сохрани" (any case),
+     the server WILL NOT save anything and will return saved = False.
+
+  2) If user_message_raw contains "сохрани" but does NOT contain "сохрани в",
+     the server saves into Inbox (no project field).
+
+  3) If user_message_raw contains "сохрани в ...":
+     - If the message has quotes, e.g.:
+         - 'сохрани в "Здоровье"'
+         - 'сохрани в «Здоровье»'
+       then the project name is the text inside the quotes.
+     - Otherwise, the project name is everything after "сохрани в"
+       (trimmed whitespace).
+
+- The caller MAY optionally pass project_name directly; if it is provided,
+  the server will use it. If project_name is None, the server will derive the
+  project name from user_message_raw as described above.
+
+- If a project with that name does not exist, the AI Organiser backend is
+  responsible for creating it or reusing it.
+
+WHEN TO CALL (INTENT)
+- The client SHOULD call ai_organiser_save only when the user clearly asks
+  to save something, for example:
   - "сохрани это"
-  - "сохрани в библиотеку"
-  - "сохрани в проект здоровье"
+  - "сохрани в \"Здоровье\""
+  - "сохрани в «Работа»"
   - "save this"
-  - "save this to the library"
-  - "save this to project X"
-- In all other cases, do not call this tool.
+- But even if the client misbehaves, the server-side checks above guarantee
+  that nothing is saved unless the user message contains "сохрани".
 
 WHAT TO SAVE
 - When the user says "сохрани это" / "save this":
@@ -58,12 +68,10 @@ WHAT TO SAVE
   - Do NOT save the user's request ("Составь план..."), save your answer.
 
 PROJECT / FOLDERS
-- If the user just says "сохрани это", save into the default Inbox
-  (do not send a project name).
-- If the user names a project (e.g. "сохрани в проект здоровье"),
-  pass that project name as the "project" field.
-- Do not try to validate or normalize project names: the AI Organiser backend
-  will decide whether to create or reuse the project.
+- "сохрани" (without "в") -> save to Inbox (no project field).
+- "сохрани в \"Имя\"" or "сохрани в «Имя»" -> save to project "Имя".
+- If the backend needs to create the project, it will do so based on the
+  passed project name.
 
 TURN ORDER / PATTERN
 - First: answer the user's main question normally.
@@ -102,7 +110,6 @@ def _resolve_integration_token() -> str | None:
     """
     token: str | None = None
 
-    # 1–3: пробуем достать токен из текущего HTTP-запроса.
     try:
         request: Request = get_http_request()
 
@@ -119,7 +126,6 @@ def _resolve_integration_token() -> str | None:
             if auth_header and auth_header.lower().startswith("bearer "):
                 token = auth_header.split(" ", 1)[1].strip()
     except Exception:
-        # Если по какой-то причине HTTP-контекст недоступен — просто пропускаем.
         token = None
 
     # 4) Фоллбек: single-user токен из окружения (как у тебя сейчас)
@@ -129,38 +135,58 @@ def _resolve_integration_token() -> str | None:
     return token
 
 
-def _looks_like_greeting_or_too_short(text: str) -> bool:
+def _infer_project_name_from_user_message(user_message_raw: str) -> tuple[bool, str | None]:
     """
-    Простая защита от бессмысленных сохранений:
-    - очень короткий текст
-    - типичные приветствия
+    Разбираем user_message_raw и возвращаем:
+      (should_save, project_name)
+
+    Правила:
+    - если нет "сохрани" -> should_save = False
+    - если есть "сохрани", но нет "сохрани в" -> Inbox (project_name = None)
+    - если есть "сохрани в ...":
+        * сначала ищем кавычки ("Имя" или «Имя»)
+        * если кавычек нет — берём всё после "сохрани в" как имя проекта
     """
-    if not text:
-        return True
+    if not user_message_raw:
+        return False, None
 
-    stripped = text.strip()
-    # короткий текст, типа "Привет!" – не сохраняем
-    if len(stripped) < 40:
-        # дополнительно отсекаем классические приветствия
-        lowered = stripped.lower()
-        common_greetings = [
-            "привет",
-            "привет!",
-            "привет))",
-            "привет)",
-            "hi",
-            "hi!",
-            "hello",
-            "hello!",
-            "здравствуй",
-            "здравствуйте",
-        ]
-        if lowered in common_greetings:
-            return True
-        # и в целом любой текст короче 40 символов считаем подозрительным
-        return True
+    normalized = user_message_raw.lower()
 
-    return False
+    # 1. Нет "сохрани" — не сохраняем вообще
+    if "сохрани" not in normalized:
+        return False, None
+
+    # 2. Есть "сохрани", но нет "сохрани в" — сохраняем в Inbox
+    if "сохрани в" not in normalized:
+        return True, None  # Inbox
+
+    # 3. Есть "сохрани в ..."
+    # Сначала пытаемся найти текст в кавычках (оригинальный текст, чтобы не терять регистр)
+    text = user_message_raw
+
+    # Вариант с «ёлочками»
+    match = re.search(r"сохрани\s+в\s*«([^»]+)»", text, flags=re.IGNORECASE)
+    if match:
+        project = match.group(1).strip()
+        return True, project if project else None
+
+    # Вариант с обычными двойными кавычками
+    match = re.search(r'sохрани\s+в\s*"([^"]+)"', text, flags=re.IGNORECASE)
+    if match:
+        project = match.group(1).strip()
+        return True, project if project else None
+
+    # Если кавычек нет — берём всё после "сохрани в"
+    # Простой фоллбек: ищем позицию "сохрани в" без учёта регистра
+    idx = normalized.find("сохрани в")
+    if idx != -1:
+        # Берём часть строки после "сохрани в"
+        after = text[idx + len("сохрани в") :].strip()
+        if after:
+            return True, after
+
+    # Если ничего не смогли вытащить — считаем, что сохраняем в Inbox
+    return True, None
 
 
 @mcp.tool
@@ -168,22 +194,23 @@ def ai_organiser_save(
     body: str,
     project_name: str | None = None,
     title: str | None = None,
+    user_message_raw: str | None = None,
 ) -> dict:
     """
     Save a text message to AI Organiser as a note.
 
-    IMPORTANT:
-    - Call this tool ONLY if the LATEST user message explicitly contains
-      the word "сохрани" (Russian) or "save" (English).
-    - Never call this tool for greetings, questions or any messages
-      that do not explicitly ask to save something.
+    IMPORTANT SERVER LOGIC:
+    - The client MUST pass the latest user message as `user_message_raw`.
+    - The server:
+        * will NOT save anything if user_message_raw does not contain "сохрани";
+        * will save to Inbox if there is "сохрани" but no "сохрани в";
+        * will save to a specific project if the message contains "сохрани в ...",
+          using either the quoted name or the text after "сохрани в".
 
     - integration token берётся:
         1) из query-параметра ?token=... MCP URL,
         2) или из заголовков (x-ai-organiser-token / Authorization: Bearer ...),
         3) или из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback).
-    - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
-    - Если project_name задан -> отправляем его в поле 'project'.
     """
 
     if not SUPABASE_ANON_KEY:
@@ -195,7 +222,6 @@ def ai_organiser_save(
     integration_token = _resolve_integration_token()
 
     if not integration_token:
-        # Важно: не просим пользователя вставлять токен в чат.
         return {
             "saved": False,
             "error": (
@@ -206,16 +232,38 @@ def ai_organiser_save(
             ),
         }
 
-    # Защита от кривых вызовов типа "Привет!"
-    if _looks_like_greeting_or_too_short(body or ""):
+    if not user_message_raw:
+        # Без последнего сообщения пользователя мы не можем применить правила.
         return {
             "saved": False,
             "skipped": True,
-            "reason": "Text is too short or looks like a greeting; "
-                      "ai_organiser_save should only be called when the user "
-                      'explicitly asks to "save" some meaningful content.',
+            "reason": (
+                "user_message_raw is missing. The client must pass the latest "
+                "user message into user_message_raw when calling ai_organiser_save."
+            ),
             "body_preview": (body or "")[:160],
         }
+
+    should_save, inferred_project = _infer_project_name_from_user_message(user_message_raw)
+
+    if not should_save:
+        # Пользователь явно не просил "сохрани" — ничего не делаем.
+        return {
+            "saved": False,
+            "skipped": True,
+            "reason": (
+                "Latest user message does not contain 'сохрани'; "
+                "skipping save to avoid accidental calls."
+            ),
+            "user_message_preview": user_message_raw[:160],
+            "body_preview": (body or "")[:160],
+        }
+
+    # Определяем итоговое имя проекта:
+    # 1) если явно передан project_name в аргументах — используем его;
+    # 2) иначе используем то, что вытащили из user_message_raw;
+    # 3) если там None — значит сохраняем в Inbox.
+    final_project_name = project_name if project_name is not None else inferred_project
 
     payload: dict = {
         "text": body,
@@ -223,8 +271,8 @@ def ai_organiser_save(
         "sourceTitle": title,
     }
 
-    if project_name:
-        payload["project"] = project_name
+    if final_project_name:
+        payload["project"] = final_project_name
 
     headers = {
         "Content-Type": "application/json",
@@ -256,7 +304,7 @@ def ai_organiser_save(
 
         return {
             "saved": True,
-            "project_name": project_name or "Inbox",
+            "project_name": final_project_name or "Inbox",
             "body_preview": body[:160],
             "supabase_response": data,
         }
