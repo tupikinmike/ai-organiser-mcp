@@ -1,6 +1,8 @@
 import os
 import httpx
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_request
+from starlette.requests import Request
 
 # Имя сервера, которое будет видно в ChatGPT
 mcp = FastMCP(
@@ -14,8 +16,14 @@ GOAL:
 AUTH MODEL:
 - Each user has their own integration token issued by AI Organiser.
 - This token is NOT typed in chat.
-- For now, this server uses a single integration token from environment
-  variable AI_ORGANISER_INTEGRATION_TOKEN.
+- The token is provided by the MCP connection itself and this server
+  resolves it in the following order:
+  1) Query parameter "token" in the MCP URL
+     (e.g. https://ai-organiser-mcp.your-domain.com/mcp?token=USER_TOKEN)
+  2) HTTP header "x-ai-organiser-token"
+  3) HTTP header "Authorization: Bearer <token>"
+  4) Environment variable AI_ORGANISER_INTEGRATION_TOKEN (single-user fallback).
+- The resolved token is forwarded to AI Organiser as the x-api-key header.
 - NEVER ask the user to type their token in messages.
 
 WHEN TO CALL:
@@ -53,6 +61,44 @@ SUPABASE_ANON_KEY = (
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
 
+def _resolve_integration_token() -> str | None:
+    """
+    Определяем, какой integration token использовать для этого запроса.
+
+    Приоритет:
+      1) ?token=... в MCP URL
+      2) заголовок x-ai-organiser-token
+      3) Authorization: Bearer <token>
+      4) переменная окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback)
+    """
+    token: str | None = None
+
+    try:
+        request: Request = get_http_request()
+
+        # 1) query-параметр ?token=...
+        token = request.query_params.get("token")
+
+        # 2) заголовок x-ai-organiser-token
+        if not token:
+            token = request.headers.get("x-ai-organiser-token")
+
+        # 3) Authorization: Bearer <token>
+        if not token:
+            auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+            if auth_header and auth_header.lower().startswith("bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+    except Exception:
+        # Если HTTP-контекст недоступен — идём дальше
+        token = None
+
+    # 4) Фоллбек: single-user токен из окружения (как у тебя сейчас)
+    if not token:
+        token = os.getenv(INTEGRATION_TOKEN_ENV_VAR)
+
+    return token
+
+
 @mcp.tool
 def ai_organiser_save(
     body: str,
@@ -62,8 +108,10 @@ def ai_organiser_save(
     """
     Save a text message to AI Organiser as a note.
 
-    - integration token берётся из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN
-      на сервере (Render).
+    - integration token берётся:
+        1) из query-параметра ?token=... MCP URL,
+        2) или из заголовков (x-ai-organiser-token / Authorization: Bearer ...),
+        3) или из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback).
     - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
     - Если project_name задан  -> отправляем его в поле 'project'.
     """
@@ -74,21 +122,23 @@ def ai_organiser_save(
             "error": "SUPABASE_ANON_KEY is not configured.",
         }
 
-    integration_token = os.getenv(INTEGRATION_TOKEN_ENV_VAR)
+    integration_token = _resolve_integration_token()
 
     if not integration_token:
         return {
             "saved": False,
             "error": (
-                "AI_ORGANISER_INTEGRATION_TOKEN is not set on the server. "
-                "Set it in Render → Environment."
+                "AI Organiser integration token is not provided. "
+                "The MCP server expects it either in the MCP URL as ?token=YOUR_TOKEN, "
+                "in headers (x-ai-organiser-token / Authorization: Bearer <token>), "
+                f"or in the environment variable {INTEGRATION_TOKEN_ENV_VAR}."
             ),
         }
 
     payload = {
         "text": body,
         "sourceUrl": None,
-        "sourceTitle": None,
+        "sourceTitle": title,
     }
 
     if project_name:
