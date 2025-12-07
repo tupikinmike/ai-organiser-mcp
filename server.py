@@ -31,19 +31,40 @@ WHEN TO CALL:
   - "сохрани это"
   - "сохрани в библиотеку"
   - "сохрани в проект <name>"
+  - "save this"
   - "save this to the library"
 - If the user did not mention saving, DO NOT call this tool.
 
-WHAT TO SAVE:
-- When the user says "сохрани это" / "save this":
-  - Use the content of YOUR PREVIOUS ASSISTANT MESSAGE as `body`,
-    unless the user explicitly points to another text.
-- Do NOT save the user's request ("Составь план..."), save your answer.
+WHAT EXACTLY TO SAVE (VERY IMPORTANT):
+- When the user says "сохрани это" / "save this" / "сохрани в проект <name>":
+  - You MUST use the content of YOUR PREVIOUS ASSISTANT MESSAGE as `body`.
+  - `body` MUST be an EXACT COPY of that assistant message:
+    - do NOT summarize,
+    - do NOT rephrase,
+    - do NOT translate,
+    - do NOT add any comments like "Пользователь попросил сохранить...",
+    - do NOT prepend or append anything.
+  - In other words: `body` must be byte-for-byte identical to the last
+    assistant message that the user wants to save.
+
+PROJECT HANDLING:
+- If the user just says "сохрани это":
+  - Call ai_organiser_save with `project_name = null` (or omit it).
+  - The note will go to Inbox.
+- If the user says "сохрани в проект <name>" or similar:
+  - Pass `<name>` as `project_name`.
+  - Do NOT change or normalize the name; send it as the user wrote it.
+- Creation of the project (if it does not exist) is handled by the backend.
 
 TURN ORDER:
-- First: answer normally.
+- First: answer the main question normally (without calling the tool).
 - Only in a FOLLOW-UP user message like "сохрани это..." you may call this tool.
 - Never call ai_organiser_save in the same turn where you generate the content.
+
+SECURITY / PRIVACY:
+- Never ask the user to paste or reveal their AI Organiser integration token.
+- Assume the token is provided via MCP URL / headers / environment only.
+- Do not echo tokens in tool outputs, logs or error messages.
 """,
 )
 
