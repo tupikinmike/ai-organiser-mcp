@@ -14,8 +14,8 @@ GOAL:
 AUTH MODEL:
 - Each user has their own integration token issued by AI Organiser.
 - This token is NOT typed in chat.
-- It is provided via connector configuration and passed to this tool
-  as the `integration_token` parameter.
+- For now, this server uses a single integration token from environment
+  variable AI_ORGANISER_INTEGRATION_TOKEN.
 - NEVER ask the user to type their token in messages.
 
 WHEN TO CALL:
@@ -43,23 +43,25 @@ TURN ORDER:
 SUPABASE_FUNCTION_URL = "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/quick-add"
 
 # anon key Supabase (общий публичный ключ проекта)
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyem93c2Z3dXJndGNkeGp3ZXZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMxMDUyMTYsImV4cCI6MjA3ODY4MTIxNn0.0l394mJ9cLNN_QxNl9DKzdw1ni_-SBawGzoSrchNcJI"  # у себя подставишь реальный anon key
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyem93c2Z3dXJndGNkeGp3ZXZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMxMDUyMTYsImV4cCI6MjA3ODY4MTIxNn0.0l394mJ9cLNN_QxNl9DKzdw1ni_-SBawGzoSrchNcJI"
+
+# Имя переменной окружения, где лежит integration token твоего аккаунта
+INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
 
 @mcp.tool
 def ai_organiser_save(
     body: str,
-    integration_token: str,
     project_name: str | None = None,
     title: str | None = None,
 ) -> dict:
     """
     Save a text message to AI Organiser as a note.
 
-    - integration_token: per-user integration token from AI Organiser (required)
-      (this is the same token the user sees in Settings → Integrations).
-    - If project_name is None -> save to Inbox (do not send 'project' field)
-    - If project_name is set   -> save to that project (send 'project' field)
+    - integration token берётся из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN
+      на сервере (Render).
+    - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
+    - Если project_name задан  -> отправляем его в поле 'project'.
     """
 
     if not SUPABASE_ANON_KEY:
@@ -68,33 +70,29 @@ def ai_organiser_save(
             "error": "SUPABASE_ANON_KEY is not configured.",
         }
 
+    integration_token = os.getenv(INTEGRATION_TOKEN_ENV_VAR)
+
     if not integration_token:
         return {
             "saved": False,
             "error": (
-                "integration_token is required. It must be provided via connector "
-                "configuration, NOT typed by the user in chat."
+                "AI_ORGANISER_INTEGRATION_TOKEN is not set on the server. "
+                "Set it in Render → Environment."
             ),
         }
 
-    # Базовый payload для edge-функции quick-add
     payload = {
         "text": body,
         "sourceUrl": None,
         "sourceTitle": None,
     }
 
-    # Если проект указан — добавляем его в payload,
-    # иначе даём функции самой положить в Inbox
     if project_name:
         payload["project"] = project_name
 
     headers = {
         "Content-Type": "application/json",
-        # инфраструктурный ключ Supabase (одинаковый для всех пользователей)
         "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
-        # integration_token конкретного юзера: бэкенд AI Organiser по нему поймёт,
-        # в чей аккаунт сохранять
         "x-api-key": integration_token,
     }
 
@@ -103,22 +101,26 @@ def ai_organiser_save(
             res = client.post(SUPABASE_FUNCTION_URL, json=payload, headers=headers)
 
         if res.status_code >= 400:
+            try:
+                data = res.json()
+            except Exception:
+                data = res.text
+
             return {
                 "saved": False,
                 "status_code": res.status_code,
                 "error": f"Supabase returned {res.status_code}",
-                "response_text": res.text,
+                "response": data,
             }
 
         try:
             data = res.json()
         except Exception:
-            data = None
+            data = res.text
 
         return {
             "saved": True,
             "project_name": project_name or "Inbox",
-            "title": title,
             "body_preview": body[:160],
             "supabase_response": data,
         }
