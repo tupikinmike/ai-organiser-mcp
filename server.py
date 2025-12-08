@@ -119,19 +119,14 @@ def _resolve_integration_token() -> str | None:
     return token
 
 
-@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
-async def oauth_protected_resource(request: Request) -> JSONResponse:
+def _protected_resource_payload() -> dict:
     """
-    OAuth protected resource metadata for this MCP server.
-
-    ChatGPT читает здесь:
-      - какой ресурс защищаем,
-      - какими авторизационными серверами можно пользоваться,
-      - какие scopes поддерживаются.
+    Один и тот же JSON, который будем отдавать по двум путям:
+    /.well-known/oauth-protected-resource
+    /.well-known/oauth-protected-resource/mcp
     """
-    data = {
-        # ВАЖНО: ресурс должен точно совпадать с MCP Server URL,
-        # который пользователь вводит в настройках ChatGPT.
+    return {
+        # ВАЖНО: это должен быть ровно MCP Server URL из настроек ChatGPT
         "resource": "https://ai-organiser-mcp-1.onrender.com/mcp",
         "authorization_servers": [
             AUTH_BASE_URL,
@@ -139,7 +134,24 @@ async def oauth_protected_resource(request: Request) -> JSONResponse:
         "scopes_supported": ["notes:write"],
         "resource_documentation": "https://ai-organiser.app/docs/chatgpt",
     }
-    return JSONResponse(data)
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource(request: Request) -> JSONResponse:
+    """
+    OAuth protected resource metadata for this MCP server (основной путь).
+    """
+    return JSONResponse(_protected_resource_payload())
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET"])
+async def oauth_protected_resource_with_suffix(request: Request) -> JSONResponse:
+    """
+    Некоторые клиенты (и, судя по ошибке, ChatGPT тоже) обращаются к
+    /.well-known/oauth-protected-resource/mcp, если MCP URL заканчивается на /mcp.
+    Отдаём тот же JSON, чтобы не ломать спецификацию.
+    """
+    return JSONResponse(_protected_resource_payload())
 
 
 @mcp.tool
