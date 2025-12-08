@@ -79,9 +79,8 @@ SUPABASE_ANON_KEY = (
 # Имя переменной окружения, где лежит integration token аккаунта AI Organiser
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
-# База авторизационного сервера (который сделаем позже, в AI Organiser)
-# Пример для продакшена: https://id.ai-organiser.app/mcp
-AUTH_BASE_URL = os.getenv("AI_ORGANISER_AUTH_BASE_URL", "https://auth.ai-organiser.example.com")
+# ЖЁСТКО прописанный URL авторизационного сервера (Lovable auth-сервер)
+AUTH_BASE_URL = "https://llm-wisdom-vault.lovable.app"
 
 
 def _resolve_integration_token() -> str | None:
@@ -126,9 +125,6 @@ async def oauth_protected_resource(request: Request) -> JSONResponse:
       - какой ресурс защищаем,
       - какими авторизационными серверами можно пользоваться,
       - какие scope мы поддерживаем.
-
-    Позже мы реально реализуем AUTH_BASE_URL как авторизационный сервер
-    (через Lovable / Supabase), тогда ChatGPT сможет пройти полный OAuth-флоу.
     """
     data = {
         "resource": "https://ai-organiser-mcp-1.onrender.com",
