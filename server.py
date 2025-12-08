@@ -81,8 +81,8 @@ SUPABASE_ANON_KEY = (
 # Имя переменной окружения, где лежит integration token аккаунта AI Organiser
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
-# В качестве OAuth authorization server используем Supabase-проект
-AUTH_BASE_URL = "https://trzowsfwurgtcdxjwevi.supabase.co"
+# ТЕПЕРЬ: авторизационный сервер — фронт на Lovable
+AUTH_BASE_URL = "https://llm-wisdom-vault.lovable.app"
 
 
 def _resolve_integration_token() -> str | None:
@@ -121,13 +121,14 @@ def _resolve_integration_token() -> str | None:
 
 def _protected_resource_payload() -> dict:
     """
-    Один и тот же JSON, который будем отдавать по двум путям:
+    Один и тот же JSON, который отдаём по двум путям:
     /.well-known/oauth-protected-resource
     /.well-known/oauth-protected-resource/mcp
     """
     return {
-        # ВАЖНО: это должен быть ровно MCP Server URL из настроек ChatGPT
+        # ВАЖНО: это ровно MCP Server URL из настроек ChatGPT
         "resource": "https://ai-organiser-mcp-1.onrender.com/mcp",
+        # А здесь — базовый URL OAuth-сервера (Lovable)
         "authorization_servers": [
             AUTH_BASE_URL,
         ],
@@ -138,19 +139,11 @@ def _protected_resource_payload() -> dict:
 
 @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
 async def oauth_protected_resource(request: Request) -> JSONResponse:
-    """
-    OAuth protected resource metadata for this MCP server (основной путь).
-    """
     return JSONResponse(_protected_resource_payload())
 
 
 @mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET"])
 async def oauth_protected_resource_with_suffix(request: Request) -> JSONResponse:
-    """
-    Некоторые клиенты (и, судя по ошибке, ChatGPT тоже) обращаются к
-    /.well-known/oauth-protected-resource/mcp, если MCP URL заканчивается на /mcp.
-    Отдаём тот же JSON, чтобы не ломать спецификацию.
-    """
     return JSONResponse(_protected_resource_payload())
 
 
@@ -162,13 +155,6 @@ def ai_organiser_save(
 ) -> dict:
     """
     Save a text message to AI Organiser as a note.
-
-    - integration token берётся:
-        1) из Authorization: Bearer <token> (OAuth-доступ),
-        2) или из заголовка x-ai-organiser-token,
-        3) или из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback).
-    - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
-    - Если project_name задан  -> отправляем его в поле 'project'.
     """
 
     if not SUPABASE_ANON_KEY:
@@ -243,7 +229,6 @@ def ai_organiser_save(
 
 
 if __name__ == "__main__":
-    # Запускаем сервер в режиме HTTP /mcp, который ждёт соединений от ChatGPT
     host = os.getenv("MCP_HOST", "0.0.0.0")
     port = int(os.getenv("MCP_PORT", "8000"))
     path = os.getenv("MCP_PATH", "/mcp")
