@@ -1,8 +1,10 @@
 import os
 import httpx
+
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 # Имя сервера, которое будет видно в ChatGPT
 mcp = FastMCP(
@@ -13,18 +15,14 @@ This server exposes a single tool: ai_organiser_save.
 GOAL:
 - Save ChatGPT responses into the user's AI Organiser account.
 
-AUTH MODEL:
-- Each user has their own integration token issued by AI Organiser.
-- This token is NOT typed in chat.
-- The token is provided by the MCP connection itself and this server
-  resolves it in the following order:
-  1) Query parameter "token" in the MCP URL
-     (e.g. https://ai-organiser-mcp.your-domain.com/mcp?token=USER_TOKEN)
-  2) HTTP header "x-ai-organiser-token"
-  3) HTTP header "Authorization: Bearer <token>"
-  4) Environment variable AI_ORGANISER_INTEGRATION_TOKEN (single-user fallback).
+AUTH MODEL (CURRENT STATE):
+- Each AI Organiser user has their own integration token.
+- For now, this MCP server resolves a token in the following order:
+  1) Authorization: Bearer <token> header (for future OAuth-based access tokens)
+  2) x-ai-organiser-token header (custom header, if provided)
+  3) Environment variable AI_ORGANISER_INTEGRATION_TOKEN (single-user fallback)
 - The resolved token is forwarded to AI Organiser as the x-api-key header.
-- NEVER ask the user to type their token in messages.
+- NEVER ask the user to type their token in chat messages.
 
 WHEN TO CALL:
 - Only call ai_organiser_save when the user clearly asks to save something, e.g.:
@@ -63,7 +61,7 @@ TURN ORDER:
 
 SECURITY / PRIVACY:
 - Never ask the user to paste or reveal their AI Organiser integration token.
-- Assume the token is provided via MCP URL / headers / environment only.
+- Assume the token is provided via connector configuration / headers / environment only.
 - Do not echo tokens in tool outputs, logs or error messages.
 """,
 )
@@ -81,43 +79,67 @@ SUPABASE_ANON_KEY = (
 # Имя переменной окружения, где лежит integration token аккаунта AI Organiser
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
+# База авторизационного сервера (который сделаем позже, в AI Organiser)
+# Пример для продакшена: https://id.ai-organiser.app/mcp
+AUTH_BASE_URL = os.getenv("AI_ORGANISER_AUTH_BASE_URL", "https://auth.ai-organiser.example.com")
+
 
 def _resolve_integration_token() -> str | None:
     """
-    Определяем, какой integration token использовать для этого запроса.
+    Определяем, какой токен использовать для этого запроса.
 
-    Приоритет:
-      1) ?token=... в MCP URL
-      2) заголовок x-ai-organiser-token
-      3) Authorization: Bearer <token>
-      4) переменная окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback)
+    Текущая логика (до полноценного OAuth):
+      1) Authorization: Bearer <token>  -> используем <token> как integration_token
+      2) x-ai-organiser-token           -> используем значение как integration_token
+      3) переменная окружения AI_ORGANISER_INTEGRATION_TOKEN (single-user fallback)
     """
     token: str | None = None
 
     try:
         request: Request = get_http_request()
 
-        # 1) query-параметр ?token=...
-        token = request.query_params.get("token")
+        # 1) Authorization: Bearer <token>
+        auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
 
-        # 2) заголовок x-ai-organiser-token
+        # 2) x-ai-organiser-token
         if not token:
             token = request.headers.get("x-ai-organiser-token")
-
-        # 3) Authorization: Bearer <token>
-        if not token:
-            auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
-            if auth_header and auth_header.lower().startswith("bearer "):
-                token = auth_header.split(" ", 1)[1].strip()
     except Exception:
-        # Если HTTP-контекст недоступен — идём дальше
         token = None
 
-    # 4) Фоллбек: single-user токен из окружения (как у тебя сейчас)
+    # 3) Фоллбек: single-user токен из окружения
     if not token:
         token = os.getenv(INTEGRATION_TOKEN_ENV_VAR)
 
     return token
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource(request: Request) -> JSONResponse:
+    """
+    OAuth protected resource metadata for this MCP server.
+
+    Это требуется MCP авторизационной спецификацией:
+    ChatGPT будет читать здесь:
+      - какой ресурс защищаем,
+      - какими авторизационными серверами можно пользоваться,
+      - какие scope мы поддерживаем.
+
+    Позже мы реально реализуем AUTH_BASE_URL как авторизационный сервер
+    (через Lovable / Supabase), тогда ChatGPT сможет пройти полный OAuth-флоу.
+    """
+    data = {
+        "resource": "https://ai-organiser-mcp-1.onrender.com",
+        "authorization_servers": [
+            AUTH_BASE_URL,
+        ],
+        "scopes_supported": ["notes:write"],
+        # сюда потом можно повесить публичную доку
+        "resource_documentation": "https://ai-organiser.app/docs/chatgpt",
+    }
+    return JSONResponse(data)
 
 
 @mcp.tool
@@ -130,8 +152,8 @@ def ai_organiser_save(
     Save a text message to AI Organiser as a note.
 
     - integration token берётся:
-        1) из query-параметра ?token=... MCP URL,
-        2) или из заголовков (x-ai-organiser-token / Authorization: Bearer ...),
+        1) из Authorization: Bearer <token> (будущий OAuth-доступ),
+        2) или из заголовка x-ai-organiser-token,
         3) или из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback).
     - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
     - Если project_name задан  -> отправляем его в поле 'project'.
@@ -150,8 +172,8 @@ def ai_organiser_save(
             "saved": False,
             "error": (
                 "AI Organiser integration token is not provided. "
-                "The MCP server expects it either in the MCP URL as ?token=YOUR_TOKEN, "
-                "in headers (x-ai-organiser-token / Authorization: Bearer <token>), "
+                "The MCP server expects it either via Authorization: Bearer <token>, "
+                "x-ai-organiser-token header, "
                 f"or in the environment variable {INTEGRATION_TOKEN_ENV_VAR}."
             ),
         }
