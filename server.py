@@ -17,8 +17,8 @@ GOAL:
 
 AUTH MODEL (CURRENT STATE):
 - Each AI Organiser user has their own integration token.
-- For now, this MCP server resolves a token in the following order:
-  1) Authorization: Bearer <token> header (for future OAuth-based access tokens)
+- This MCP server resolves a token in the following order:
+  1) Authorization: Bearer <token> header (OAuth access token)
   2) x-ai-organiser-token header (custom header, if provided)
   3) Environment variable AI_ORGANISER_INTEGRATION_TOKEN (single-user fallback)
 - The resolved token is forwarded to AI Organiser as the x-api-key header.
@@ -42,7 +42,7 @@ WHAT EXACTLY TO SAVE (VERY IMPORTANT):
     - do NOT translate,
     - do NOT add any comments like "Пользователь попросил сохранить...",
     - do NOT prepend or append anything.
-  - In other words: `body` must be byte-for-byte identical to the last
+  - In other words: `body` must be identical to the last
     assistant message that the user wants to save.
 
 PROJECT HANDLING:
@@ -67,7 +67,9 @@ SECURITY / PRIVACY:
 )
 
 # Настройки Supabase edge function (общие для всех пользователей)
-SUPABASE_FUNCTION_URL = "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/quick-add"
+SUPABASE_FUNCTION_URL = (
+    "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/quick-add"
+)
 
 # anon key Supabase (общий публичный ключ проекта)
 SUPABASE_ANON_KEY = (
@@ -79,7 +81,7 @@ SUPABASE_ANON_KEY = (
 # Имя переменной окружения, где лежит integration token аккаунта AI Organiser
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
-# ТЕПЕРЬ: в качестве OAuth authorization server используем Supabase-проект
+# В качестве OAuth authorization server используем Supabase-проект
 AUTH_BASE_URL = "https://trzowsfwurgtcdxjwevi.supabase.co"
 
 
@@ -87,7 +89,7 @@ def _resolve_integration_token() -> str | None:
     """
     Определяем, какой токен использовать для этого запроса.
 
-    Текущая логика (до полноценного OAuth):
+    Логика:
       1) Authorization: Bearer <token>  -> используем <token> как integration_token
       2) x-ai-organiser-token           -> используем значение как integration_token
       3) переменная окружения AI_ORGANISER_INTEGRATION_TOKEN (single-user fallback)
@@ -98,7 +100,9 @@ def _resolve_integration_token() -> str | None:
         request: Request = get_http_request()
 
         # 1) Authorization: Bearer <token>
-        auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+        auth_header = request.headers.get("authorization") or request.headers.get(
+            "Authorization"
+        )
         if auth_header and auth_header.lower().startswith("bearer "):
             token = auth_header.split(" ", 1)[1].strip()
 
@@ -120,13 +124,15 @@ async def oauth_protected_resource(request: Request) -> JSONResponse:
     """
     OAuth protected resource metadata for this MCP server.
 
-    ChatGPT будет читать здесь:
+    ChatGPT читает здесь:
       - какой ресурс защищаем,
       - какими авторизационными серверами можно пользоваться,
-      - какие scope мы поддерживаем.
+      - какие scopes поддерживаются.
     """
     data = {
-        "resource": "https://ai-organiser-mcp-1.onrender.com",
+        # ВАЖНО: ресурс должен точно совпадать с MCP Server URL,
+        # который пользователь вводит в настройках ChatGPT.
+        "resource": "https://ai-organiser-mcp-1.onrender.com/mcp",
         "authorization_servers": [
             AUTH_BASE_URL,
         ],
@@ -146,7 +152,7 @@ def ai_organiser_save(
     Save a text message to AI Organiser as a note.
 
     - integration token берётся:
-        1) из Authorization: Bearer <token> (будущий OAuth-доступ),
+        1) из Authorization: Bearer <token> (OAuth-доступ),
         2) или из заголовка x-ai-organiser-token,
         3) или из переменной окружения AI_ORGANISER_INTEGRATION_TOKEN (fallback).
     - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
