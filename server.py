@@ -42,7 +42,7 @@ TURN ORDER:
 
 # ---------- OAuth protected resource metadata ----------
 
-# ВАЖНО: resource сейчас без /mcp
+# resource сейчас без /mcp
 RESOURCE_URL = os.getenv(
     "MCP_RESOURCE_URL",
     "https://ai-organiser-mcp-1.onrender.com",
@@ -63,8 +63,7 @@ def _protected_resource_metadata() -> dict:
         "scopes_supported": OAUTH_SCOPES,
         "resource_documentation": "https://ai-organiser.app/docs/chatgpt",
     }
-    # Логируем, что именно мы отдаем
-    print("OAUTH META GENERATED:", meta, flush=True)
+    print("OAUTH META GENERATED (protected-resource):", meta, flush=True)
     return meta
 
 
@@ -72,7 +71,7 @@ def _protected_resource_metadata() -> dict:
 @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
 async def oauth_protected_resource_root(request):
     print(
-        "OAUTH META HIT (root):",
+        "OAUTH META HIT (protected root):",
         request.method,
         str(request.url),
         "UA=",
@@ -86,7 +85,7 @@ async def oauth_protected_resource_root(request):
 @mcp.custom_route("/mcp/.well-known/oauth-protected-resource", methods=["GET"])
 async def oauth_protected_resource_with_prefix(request):
     print(
-        "OAUTH META HIT (with /mcp):",
+        "OAUTH META HIT (protected /mcp):",
         request.method,
         str(request.url),
         "UA=",
@@ -94,6 +93,71 @@ async def oauth_protected_resource_with_prefix(request):
         flush=True,
     )
     return JSONResponse(_protected_resource_metadata())
+
+
+# ---------- OAuth authorization server metadata (ChatGPT тоже ищет их на MCP) ----------
+
+AUTH_SERVER_METADATA = {
+    "issuer": "https://llm-wisdom-vault.lovable.app",
+    "authorization_endpoint": "https://llm-wisdom-vault.lovable.app/chatgpt/oauth",
+    "token_endpoint": "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/oauth-token",
+    "registration_endpoint": "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/oauth-register",
+    "grant_types_supported": ["authorization_code"],
+    "response_types_supported": ["code"],
+    "code_challenge_methods_supported": ["S256"],
+    "token_endpoint_auth_methods_supported": ["none"],
+    "scopes_supported": ["notes:write"],
+    "debug_version": "mcp-auth-meta-v1",
+}
+
+
+def _auth_server_metadata() -> dict:
+    print("OAUTH META GENERATED (auth-server):", AUTH_SERVER_METADATA, flush=True)
+    return AUTH_SERVER_METADATA
+
+
+# ChatGPT по логам пробует три варианта путей:
+
+# 1) /.well-known/oauth-authorization-server/mcp
+@mcp.custom_route("/.well-known/oauth-authorization-server/mcp", methods=["GET"])
+async def oauth_auth_server_suffix_mcp(request):
+    print(
+        "OAUTH AUTH META HIT (/.well-known/.../mcp):",
+        request.method,
+        str(request.url),
+        "UA=",
+        request.headers.get("user-agent"),
+        flush=True,
+    )
+    return JSONResponse(_auth_server_metadata())
+
+
+# 2) /mcp/.well-known/oauth-authorization-server
+@mcp.custom_route("/mcp/.well-known/oauth-authorization-server", methods=["GET"])
+async def oauth_auth_server_with_prefix(request):
+    print(
+        "OAUTH AUTH META HIT (/mcp/.well-known/...):",
+        request.method,
+        str(request.url),
+        "UA=",
+        request.headers.get("user-agent"),
+        flush=True,
+    )
+    return JSONResponse(_auth_server_metadata())
+
+
+# 3) /.well-known/oauth-authorization-server
+@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+async def oauth_auth_server_root(request):
+    print(
+        "OAUTH AUTH META HIT (/.well-known/...):",
+        request.method,
+        str(request.url),
+        "UA=",
+        request.headers.get("user-agent"),
+        flush=True,
+    )
+    return JSONResponse(_auth_server_metadata())
 
 
 # ---------- Supabase edge function настройки ----------
