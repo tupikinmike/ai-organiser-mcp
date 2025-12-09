@@ -42,13 +42,11 @@ TURN ORDER:
 
 # ---------- OAuth protected resource metadata ----------
 
-# URL MCP-ресурса (тот же, что ты указываешь в ChatGPT как MCP Server URL)
 RESOURCE_URL = os.getenv(
     "MCP_RESOURCE_URL",
     "https://ai-organiser-mcp-1.onrender.com/mcp",
 )
 
-# OAuth Authorization Server (наш Lovable)
 OAUTH_AUTH_SERVER = os.getenv(
     "MCP_OAUTH_AUTH_SERVER",
     "https://llm-wisdom-vault.lovable.app",
@@ -57,37 +55,37 @@ OAUTH_AUTH_SERVER = os.getenv(
 OAUTH_SCOPES = ["notes:write"]
 
 
-@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
-async def oauth_protected_resource(request):
-    """
-    OAuth 2.1 Protected Resource Metadata for MCP.
-
-    Это то, что ChatGPT читает, чтобы понять:
-    - что ресурс защищён OAuth,
-    - каким авторизационным серверам он доверяет,
-    - какие есть scope'ы.
-    """
-    metadata = {
+def _protected_resource_metadata() -> dict:
+    return {
         "resource": RESOURCE_URL,
         "authorization_servers": [OAUTH_AUTH_SERVER],
         "scopes_supported": OAUTH_SCOPES,
         "resource_documentation": "https://ai-organiser.app/docs/chatgpt",
     }
-    return JSONResponse(metadata)
 
 
-# ---------- Настройки Supabase edge function (общие для всех пользователей) ----------
+# Вариант 1: корень (https://host/.well-known/...)
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource_root(request):
+    return JSONResponse(_protected_resource_metadata())
+
+
+# Вариант 2: относительный к /mcp (https://host/mcp/.well-known/...)
+@mcp.custom_route("/mcp/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource_with_prefix(request):
+    return JSONResponse(_protected_resource_metadata())
+
+
+# ---------- Supabase edge function настройки ----------
 
 SUPABASE_FUNCTION_URL = "https://trzowsfwurgtcdxjwevi.supabase.co/functions/v1/quick-add"
 
-# anon key Supabase (общий публичный ключ проекта)
 SUPABASE_ANON_KEY = (
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
     "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyem93c2Z3dXJndGNkeGp3ZXZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMxMDUyMTYsImV4cCI6MjA3ODY4MTIxNn0."
     "0l394mJ9cLNN_QxNl9DKzdw1ni_-SBawGzoSrchNcJI"
 )
 
-# Имя переменной окружения, где лежит integration token аккаунта AI Organiser
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
 
 
@@ -176,7 +174,6 @@ def ai_organiser_save(
 
 
 if __name__ == "__main__":
-    # Запускаем сервер в режиме HTTP /mcp, который ждёт соединений от ChatGPT
     host = os.getenv("MCP_HOST", "0.0.0.0")
     port = int(os.getenv("MCP_PORT", "8000"))
     path = os.getenv("MCP_PATH", "/mcp")
