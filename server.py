@@ -42,9 +42,10 @@ TURN ORDER:
 
 # ---------- OAuth protected resource metadata ----------
 
+# ВАЖНО: resource теперь БЕЗ /mcp
 RESOURCE_URL = os.getenv(
     "MCP_RESOURCE_URL",
-    "https://ai-organiser-mcp-1.onrender.com/mcp",
+    "https://ai-organiser-mcp-1.onrender.com",
 )
 
 OAUTH_AUTH_SERVER = os.getenv(
@@ -70,7 +71,7 @@ async def oauth_protected_resource_root(request):
     return JSONResponse(_protected_resource_metadata())
 
 
-# Вариант 2: относительный к /mcp (https://host/mcp/.well-known/...)
+# Вариант 2: с префиксом /mcp (https://host/mcp/.well-known/...)
 @mcp.custom_route("/mcp/.well-known/oauth-protected-resource", methods=["GET"])
 async def oauth_protected_resource_with_prefix(request):
     return JSONResponse(_protected_resource_metadata())
