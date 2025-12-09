@@ -21,11 +21,32 @@ class CaptureAuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware, который перехватывает заголовок Authorization
     у всех HTTP-запросов к MCP-серверу и кладёт его в contextvar.
-    Это позволяет внутри @mcp.tool узнать Bearer-токен,
-    который ChatGPT прислал после OAuth.
+    Дополнительно логирует список имён заголовков для пути /mcp,
+    чтобы понять, что именно отправляет ChatGPT.
     """
 
     async def dispatch(self, request, call_next):
+        # Если это запрос на /mcp — логируем имена заголовков (без значений)
+        try:
+            path = request.url.path
+        except Exception:
+            path = ""
+
+        if path.startswith("/mcp"):
+            try:
+                header_keys = list(request.headers.keys())
+                print(
+                    "MCP REQUEST HEADERS KEYS:",
+                    header_keys,
+                    flush=True,
+                )
+            except Exception as e:
+                print(
+                    f"ERROR while logging MCP request headers: {e!r}",
+                    flush=True,
+                )
+
+        # Захватываем Authorization в contextvar
         auth = request.headers.get("authorization")
         if auth:
             # Не логируем сам токен, только факт наличия
@@ -130,8 +151,7 @@ TURN ORDER:
 """,
 )
 
-# Попробуем повесить middleware на внутренний Starlette-приложение.
-# Если по какой-то причине это не удастся — single-user fallback всё равно будет работать.
+# Вешаем middleware на внутреннее Starlette-приложение MCP
 try:
     if hasattr(mcp, "app") and mcp.app is not None:
         mcp.app.add_middleware(CaptureAuthMiddleware)
