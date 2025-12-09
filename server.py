@@ -42,7 +42,7 @@ TURN ORDER:
 
 # ---------- OAuth protected resource metadata ----------
 
-# ВАЖНО: resource теперь БЕЗ /mcp
+# ВАЖНО: resource сейчас без /mcp
 RESOURCE_URL = os.getenv(
     "MCP_RESOURCE_URL",
     "https://ai-organiser-mcp-1.onrender.com",
@@ -57,23 +57,42 @@ OAUTH_SCOPES = ["notes:write"]
 
 
 def _protected_resource_metadata() -> dict:
-    return {
+    meta = {
         "resource": RESOURCE_URL,
         "authorization_servers": [OAUTH_AUTH_SERVER],
         "scopes_supported": OAUTH_SCOPES,
         "resource_documentation": "https://ai-organiser.app/docs/chatgpt",
     }
+    # Логируем, что именно мы отдаем
+    print("OAUTH META GENERATED:", meta, flush=True)
+    return meta
 
 
 # Вариант 1: корень (https://host/.well-known/...)
 @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
 async def oauth_protected_resource_root(request):
+    print(
+        "OAUTH META HIT (root):",
+        request.method,
+        str(request.url),
+        "UA=",
+        request.headers.get("user-agent"),
+        flush=True,
+    )
     return JSONResponse(_protected_resource_metadata())
 
 
 # Вариант 2: с префиксом /mcp (https://host/mcp/.well-known/...)
 @mcp.custom_route("/mcp/.well-known/oauth-protected-resource", methods=["GET"])
 async def oauth_protected_resource_with_prefix(request):
+    print(
+        "OAUTH META HIT (with /mcp):",
+        request.method,
+        str(request.url),
+        "UA=",
+        request.headers.get("user-agent"),
+        flush=True,
+    )
     return JSONResponse(_protected_resource_metadata())
 
 
@@ -104,6 +123,8 @@ def ai_organiser_save(
     - Если project_name is None -> сохраняем в Inbox (не отправляем поле 'project').
     - Если project_name задан  -> отправляем его в поле 'project'.
     """
+
+    print("ai_organiser_save CALLED; project_name=", project_name, flush=True)
 
     if not SUPABASE_ANON_KEY:
         return {
@@ -179,6 +200,7 @@ if __name__ == "__main__":
     port = int(os.getenv("MCP_PORT", "8000"))
     path = os.getenv("MCP_PATH", "/mcp")
 
+    print("Starting AI Organiser MCP server...", flush=True)
     mcp.run(
         transport="streamable-http",
         host=host,
