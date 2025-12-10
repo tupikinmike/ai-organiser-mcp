@@ -1,61 +1,14 @@
 import os
 import httpx
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
 from starlette.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from contextvars import ContextVar
 
 # ==============================
-# Глобальный контекст для Authorization
+# Имя env-переменной для single-user fallback
 # ==============================
 
-_current_auth_header: ContextVar[str | None] = ContextVar(
-    "current_auth_header", default=None
-)
-
-# Имя переменной окружения для single-user fallback
 INTEGRATION_TOKEN_ENV_VAR = "AI_ORGANISER_INTEGRATION_TOKEN"
-
-
-class CaptureAuthMiddleware(BaseHTTPMiddleware):
-    """
-    Middleware, который перехватывает заголовок Authorization
-    у всех HTTP-запросов к MCP-серверу и кладёт его в contextvar.
-    Дополнительно логирует список имён заголовков для пути /mcp,
-    чтобы понять, что именно отправляет ChatGPT.
-    """
-
-    async def dispatch(self, request, call_next):
-        # Если это запрос на /mcp — логируем имена заголовков (без значений)
-        try:
-            path = request.url.path
-        except Exception:
-            path = ""
-
-        if path.startswith("/mcp"):
-            try:
-                header_keys = list(request.headers.keys())
-                print(
-                    "MCP REQUEST HEADERS KEYS:",
-                    header_keys,
-                    flush=True,
-                )
-            except Exception as e:
-                print(
-                    f"ERROR while logging MCP request headers: {e!r}",
-                    flush=True,
-                )
-
-        # Захватываем Authorization в contextvar
-        auth = request.headers.get("authorization")
-        if auth:
-            # Не логируем сам токен, только факт наличия
-            _current_auth_header.set(auth)
-        else:
-            _current_auth_header.set(None)
-
-        response = await call_next(request)
-        return response
 
 
 def get_integration_token() -> str | None:
@@ -64,15 +17,17 @@ def get_integration_token() -> str | None:
 
     1) Authorization: Bearer <access_token> из текущего HTTP-запроса к MCP.
        - access_token выдаётся Supabase oauth-token
-       - по нашей договорённости access_token == profiles.integration_token
+       - по договорённости access_token == profiles.integration_token
 
     2) Если Bearer-токена нет / формат неверный —
        fallback к env-переменной AI_ORGANISER_INTEGRATION_TOKEN
-       (как было в single-user режиме).
+       (single-user режим).
     """
 
-    # 1) Пробуем взять Authorization: Bearer <token> из contextvar
-    auth = _current_auth_header.get()
+    # 1) Пробуем взять Authorization: Bearer <token> из HTTP-заголовков
+    headers = get_http_headers()  # вернёт {} если контекста запроса нет
+    auth = headers.get("authorization")
+
     token_from_header: str | None = None
 
     if auth and isinstance(auth, str):
@@ -84,7 +39,7 @@ def get_integration_token() -> str | None:
                 token_from_header = candidate
 
     if token_from_header:
-        # Не логируем сам токен, только то, что он был использован
+        # Не логируем сам токен, только факт использования
         print(
             "ai_organiser_save: using bearer access token from Authorization header",
             flush=True,
@@ -150,19 +105,6 @@ TURN ORDER:
 - Never call ai_organiser_save in the same turn where you generate the content.
 """,
 )
-
-# Вешаем middleware на внутреннее Starlette-приложение MCP
-try:
-    if hasattr(mcp, "app") and mcp.app is not None:
-        mcp.app.add_middleware(CaptureAuthMiddleware)
-        print("CaptureAuthMiddleware attached to MCP app", flush=True)
-    else:
-        print("WARNING: MCP app not available for middleware attachment", flush=True)
-except Exception as e:
-    print(
-        f"WARNING: failed to add CaptureAuthMiddleware: {e!r}",
-        flush=True,
-    )
 
 # ==============================
 # OAuth protected resource metadata (для ChatGPT MCP)
@@ -325,6 +267,9 @@ def ai_organiser_save(
     integration_token = get_integration_token()
 
     if not integration_token:
+        # TODO (улучшение безопасности):
+        #   здесь логичнее было бы вернуть 401 + WWW-Authenticate,
+        #   чтобы ChatGPT запустил OAuth linking UI.
         return {
             "saved": False,
             "error": (
