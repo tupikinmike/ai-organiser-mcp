@@ -70,12 +70,40 @@ def get_integration_token() -> str | None:
 mcp = FastMCP(
     name="AI Organiser MCP",
     instructions="""
-This server exposes a single tool: ai_organiser_save.
+You are connected to the user's AI Organiser account via this MCP server.
 
-GOAL:
-- Save ChatGPT responses into the user's AI Organiser account.
+You have ONE tool: ai_organiser_save(body, project_name, title).
 
-AUTH MODEL:
+WHEN TO CALL THE TOOL (VERY IMPORTANT)
+- If the user (in Russian or English) clearly asks to save something, you MUST call ai_organiser_save:
+  - "сохрани это"
+  - "сохрани в библиотеку"
+  - "сохрани в проект <имя>"
+  - "save this"
+  - "save to the library"
+  - "save to project <name>"
+- Do NOT say things like "I cannot save this externally" — you CAN save using this tool.
+
+WHAT "THIS" MEANS
+- Phrases like "сохрани это" / "save this" almost always refer to YOUR PREVIOUS ASSISTANT MESSAGE,
+  unless the user explicitly points to a different text (for example "сохрани мой текст ниже").
+
+HOW TO FILL ARGUMENTS
+- body:
+    - main text that should be saved (usually your previous answer).
+- project_name:
+    - if the user says "в проект <имя>" / "to project <name>" — use that name;
+    - otherwise pass null (the server will save to Inbox).
+- title:
+    - generate a short human-friendly title summarizing the content,
+      e.g. "План запуска проекта X" or "Краткий рецепт филе рыбы".
+
+TOOL CALL POLICY
+- First, answer the user normally if they asked you to create content.
+- If in a FOLLOW-UP message they ask to save it (using phrases above),
+  you MUST call ai_organiser_save in addition to your chat response.
+
+AUTH MODEL
 - Each user has their own integration token issued by AI Organiser.
 - This token is NOT typed in chat.
 - After OAuth:
@@ -84,25 +112,6 @@ AUTH MODEL:
 - If no bearer token is present, the server falls back to a single integration token from environment
   variable AI_ORGANISER_INTEGRATION_TOKEN.
 - NEVER ask the user to type their token in messages.
-
-WHEN TO CALL:
-- Only call ai_organiser_save when the user clearly asks to save something, e.g.:
-  - "сохрани это"
-  - "сохрани в библиотеку"
-  - "сохрани в проект <name>"
-  - "save this to the library"
-- If the user did not mention saving, DO NOT call this tool.
-
-WHAT TO SAVE:
-- When the user says "сохрани это" / "save this":
-  - Use the content of YOUR PREVIOUS ASSISTANT MESSAGE as `body`,
-    unless the user explicitly points to another text.
-- Do NOT save the user's request ("Составь план..."), save your answer.
-
-TURN ORDER:
-- First: answer normally.
-- Only in a FOLLOW-UP user message like "сохрани это..." you may call this tool.
-- Never call ai_organiser_save in the same turn where you generate the content.
 """,
 )
 
@@ -245,6 +254,23 @@ def ai_organiser_save(
 ) -> dict:
     """
     Save a text message to AI Organiser as a note.
+
+    WHEN THE MODEL SHOULD USE THIS TOOL:
+    - Whenever the user asks to "save" content in Russian or English, e.g.:
+      - "сохрани это"
+      - "сохрани в библиотеку"
+      - "сохрани в проект <имя>"
+      - "save this"
+      - "save to the library"
+      - "save to project <name>"
+
+    ARGUMENTS:
+    - body: the text that should be stored (usually the previous assistant reply).
+    - project_name:
+        - if the user mentioned a project name, use it;
+        - otherwise leave as null to save to Inbox.
+    - title:
+        - short human-readable summary of the note.
 
     Token resolution order:
     1) Try Authorization: Bearer <access_token> from the current MCP HTTP request.
