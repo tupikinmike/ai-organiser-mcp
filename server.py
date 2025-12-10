@@ -74,33 +74,39 @@ You are connected to the user's AI Organiser account via this MCP server.
 
 You have ONE tool: ai_organiser_save(body, project_name, title).
 
-WHEN TO CALL THE TOOL (VERY IMPORTANT)
-- If the user (in Russian or English) clearly asks to save something, you MUST call ai_organiser_save:
+WHEN TO CALL THE TOOL (CRITICAL)
+- If the user (in Russian or English) clearly asks to save something, you MUST call ai_organiser_save.
+- Trigger words/phrases include (but are not limited to):
+  - "сохрани"
   - "сохрани это"
-  - "сохрани в библиотеку"
   - "сохрани в проект <имя>"
+  - "сохрани в библиотеку"
+  - "save"
   - "save this"
-  - "save to the library"
   - "save to project <name>"
-- Do NOT say things like "I cannot save this externally" — you CAN save using this tool.
+  - "save to the library"
+- If the message contains "сохрани" as a verb referring to your previous answer, you SHOULD call the tool.
+- Do NOT answer things like "I cannot save to external storage" — you CAN save using this tool.
 
 WHAT "THIS" MEANS
 - Phrases like "сохрани это" / "save this" almost always refer to YOUR PREVIOUS ASSISTANT MESSAGE,
-  unless the user explicitly points to a different text (for example "сохрани мой текст ниже").
+  unless the user explicitly points to a different text.
 
-HOW TO FILL ARGUMENTS
+HOW TO FILL ARGUMENTS (KEEP IT SIMPLE)
 - body:
-    - main text that should be saved (usually your previous answer).
+    - Just pass the full text that should be saved. Usually: your previous answer, verbatim.
+    - It's OK if the text has newlines and quotes. You DO NOT need to compress it or manually escape anything.
+    - You DON'T need to think about JSON escaping: the tool runner will handle encoding.
 - project_name:
-    - if the user says "в проект <имя>" / "to project <name>" — use that name;
-    - otherwise pass null (the server will save to Inbox).
+    - If the user said "в проект <имя>" / "to project <name>" — use that name as a plain string.
+    - Otherwise pass null (the server will save to Inbox).
 - title:
-    - generate a short human-friendly title summarizing the content,
-      e.g. "План запуска проекта X" or "Краткий рецепт филе рыбы".
+    - Optional. If easy, generate a very short title (3–8 words) summarizing the content.
+    - If you are unsure or it slows you down, you MAY pass null.
 
 TOOL CALL POLICY
-- First, answer the user normally if they asked you to create content.
-- If in a FOLLOW-UP message they ask to save it (using phrases above),
+- First, answer the user normally if they asked you to create or explain something.
+- If in a FOLLOW-UP message they ask to save it (using the trigger words above),
   you MUST call ai_organiser_save in addition to your chat response.
 
 AUTH MODEL
@@ -109,8 +115,8 @@ AUTH MODEL
 - After OAuth:
   - ChatGPT sends Authorization: Bearer <access_token> to this MCP server.
   - The access_token is equal to the user's integration_token in AI Organiser.
-- If no bearer token is present, the server falls back to a single integration token from environment
-  variable AI_ORGANISER_INTEGRATION_TOKEN.
+- If no bearer token is present, the server falls back to a single integration token from
+  environment variable AI_ORGANISER_INTEGRATION_TOKEN.
 - NEVER ask the user to type their token in messages.
 """,
 )
@@ -256,21 +262,24 @@ def ai_organiser_save(
     Save a text message to AI Organiser as a note.
 
     WHEN THE MODEL SHOULD USE THIS TOOL:
-    - Whenever the user asks to "save" content in Russian or English, e.g.:
+    - Whenever the user asks to "save" content in Russian or English, for example:
+      - "сохрани"
       - "сохрани это"
-      - "сохрани в библиотеку"
       - "сохрани в проект <имя>"
+      - "сохрани в библиотеку"
       - "save this"
-      - "save to the library"
       - "save to project <name>"
 
     ARGUMENTS:
-    - body: the text that should be stored (usually the previous assistant reply).
+    - body:
+        - the text that should be stored (usually the previous assistant reply), passed verbatim;
+        - it may contain multiple lines and quotes, no need to compress or escape it manually.
     - project_name:
         - if the user mentioned a project name, use it;
         - otherwise leave as null to save to Inbox.
     - title:
-        - short human-readable summary of the note.
+        - optional short human-readable summary of the note;
+        - may be null if generating a title is inconvenient.
 
     Token resolution order:
     1) Try Authorization: Bearer <access_token> from the current MCP HTTP request.
