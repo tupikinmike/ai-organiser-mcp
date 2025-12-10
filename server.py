@@ -111,10 +111,12 @@ ERROR HANDLING (IMPORTANT FOR YOU AS THE MODEL)
     - message_for_model: short English instruction for how you should explain the situation to the user.
 - When saved == False:
     - You SHOULD follow message_for_model.
-    - You SHOULD NOT invent that "the system globally forbids saving to external apps".
+    - You SHOULD NOT claim that:
+        - "the system blocks such requests for safety reasons" or
+        - "saving to external apps is globally disabled".
     - Prefer concrete, honest explanations like:
         - asking the user to reconnect AI Organiser;
-        - suggesting to copy text manually if the backend failed.
+        - or saying there was a temporary technical issue and suggesting to copy the text manually.
 
 TOOL CALL POLICY
 - First, answer the user normally if they asked you to create or explain something.
@@ -302,7 +304,8 @@ def ai_organiser_save(
                      ... }
         - The model SHOULD:
             - follow message_for_model when talking to the user;
-            - NOT claim that ChatGPT is globally forbidden to save to external tools.
+            - NOT claim that ChatGPT is globally forbidden to save to external tools
+              or that "the system blocks such requests for safety reasons".
 
     Token resolution order:
     1) Try Authorization: Bearer <access_token> from the current MCP HTTP request.
@@ -332,8 +335,6 @@ def ai_organiser_save(
     integration_token = get_integration_token()
 
     if not integration_token:
-        # Здесь логичнее было бы вернуть 401, но в рамках tools/call
-        # мы просто даём понятную инструкцию модели.
         return {
             "saved": False,
             "error_type": "auth_error",
@@ -382,8 +383,8 @@ def ai_organiser_save(
                 "The AI Organiser backend returned an error while saving the note. "
                 "Tell the user that saving to AI Organiser failed this time, but they "
                 "still have the full content in the chat and can copy it manually. "
-                "You SHOULD NOT say that ChatGPT is globally forbidden to save to "
-                "external tools."
+                "You SHOULD NOT say that ChatGPT or the system is globally forbidden "
+                "to save to external tools."
             )
 
             if res.status_code in (401, 403):
