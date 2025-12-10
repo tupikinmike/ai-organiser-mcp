@@ -104,6 +104,18 @@ HOW TO FILL ARGUMENTS (KEEP IT SIMPLE)
     - Optional. If easy, generate a very short title (3–8 words) summarizing the content.
     - If you are unsure or it slows you down, you MAY pass null.
 
+ERROR HANDLING (IMPORTANT FOR YOU AS THE MODEL)
+- The tool returns a JSON object with at least:
+    - saved: boolean
+    - error_type: "none" | "auth_error" | "backend_error"
+    - message_for_model: short English instruction for how you should explain the situation to the user.
+- When saved == False:
+    - You SHOULD follow message_for_model.
+    - You SHOULD NOT invent that "the system globally forbids saving to external apps".
+    - Prefer concrete, honest explanations like:
+        - asking the user to reconnect AI Organiser;
+        - suggesting to copy text manually if the backend failed.
+
 TOOL CALL POLICY
 - First, answer the user normally if they asked you to create or explain something.
 - If in a FOLLOW-UP message they ask to save it (using the trigger words above),
@@ -281,6 +293,17 @@ def ai_organiser_save(
         - optional short human-readable summary of the note;
         - may be null if generating a title is inconvenient.
 
+    ERROR CONTRACT:
+    - On success:
+        - returns: { "saved": True, "error_type": "none", ... }
+    - On failure:
+        - returns: { "saved": False, "error_type": "auth_error" | "backend_error",
+                     "message_for_model": <instruction for how to explain this to the user>,
+                     ... }
+        - The model SHOULD:
+            - follow message_for_model when talking to the user;
+            - NOT claim that ChatGPT is globally forbidden to save to external tools.
+
     Token resolution order:
     1) Try Authorization: Bearer <access_token> from the current MCP HTTP request.
        - access_token is equal to the user's integration_token returned by oauth-token.
@@ -296,17 +319,30 @@ def ai_organiser_save(
     if not SUPABASE_ANON_KEY:
         return {
             "saved": False,
+            "error_type": "backend_error",
+            "message_for_model": (
+                "The AI Organiser backend is misconfigured on the server "
+                "(missing Supabase anon key). Tell the user that saving "
+                "to AI Organiser is temporarily unavailable and that they "
+                "should copy the content manually."
+            ),
             "error": "SUPABASE_ANON_KEY is not configured.",
         }
 
     integration_token = get_integration_token()
 
     if not integration_token:
-        # TODO (улучшение безопасности):
-        #   здесь логичнее было бы вернуть 401 + WWW-Authenticate,
-        #   чтобы ChatGPT запустил OAuth linking UI.
+        # Здесь логичнее было бы вернуть 401, но в рамках tools/call
+        # мы просто даём понятную инструкцию модели.
         return {
             "saved": False,
+            "error_type": "auth_error",
+            "message_for_model": (
+                "There is no valid integration token for AI Organiser in this request. "
+                "Ask the user to connect or reconnect their AI Organiser account via "
+                "the app's OAuth / account linking flow, then try saving again. "
+                "Also remind them that the full content is still available in this chat."
+            ),
             "error": (
                 "No integration token available: neither bearer token from Authorization "
                 "header nor AI_ORGANISER_INTEGRATION_TOKEN env is set."
@@ -338,11 +374,34 @@ def ai_organiser_save(
             except Exception:
                 data = res.text
 
+            # Логируем для себя, но не заставляем модель говорить "403"
+            print("Supabase quick-add error:", res.status_code, data, flush=True)
+
+            error_type = "backend_error"
+            message_for_model = (
+                "The AI Organiser backend returned an error while saving the note. "
+                "Tell the user that saving to AI Organiser failed this time, but they "
+                "still have the full content in the chat and can copy it manually. "
+                "You SHOULD NOT say that ChatGPT is globally forbidden to save to "
+                "external tools."
+            )
+
+            if res.status_code in (401, 403):
+                error_type = "auth_error"
+                message_for_model = (
+                    "AI Organiser reported that the access token or integration key is "
+                    "invalid or no longer accepted. Ask the user to reconnect their "
+                    "AI Organiser account via the app's OAuth / account linking flow "
+                    "and then try saving again. Also remind them that the full content "
+                    "is still available in this chat."
+                )
+
             return {
                 "saved": False,
-                "status_code": res.status_code,
-                "error": f"Supabase returned {res.status_code}",
-                "response": data,
+                "error_type": error_type,
+                "message_for_model": message_for_model,
+                "supabase_status": res.status_code,
+                "supabase_response": data,
             }
 
         try:
@@ -352,6 +411,7 @@ def ai_organiser_save(
 
         return {
             "saved": True,
+            "error_type": "none",
             "project_name": project_name or "Inbox",
             "title": title,
             "body_preview": body[:160],
@@ -359,8 +419,16 @@ def ai_organiser_save(
         }
 
     except Exception as e:
+        # Сетевые/прочие исключения
+        print("Exception while calling Supabase:", repr(e), flush=True)
         return {
             "saved": False,
+            "error_type": "backend_error",
+            "message_for_model": (
+                "There was a network or backend error while calling AI Organiser. "
+                "Tell the user that saving failed due to a temporary technical issue, "
+                "and suggest copying the content manually so it is not lost."
+            ),
             "error": f"Exception while calling Supabase: {e}",
         }
 
