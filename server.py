@@ -83,9 +83,13 @@ WHEN TO CALL THE TOOL
   - "сохрани это"
   - "сохрани в проект <имя>"
   - "сохрани в библиотеку"
+  - "сохрани конспект"
+  - "сделай конспект и сохрани"
   - "save"
   - "save this"
   - "save to project <name>"
+  - "save a summary"
+  - "save the summary"
   - "save to the library"
 - If the message contains "сохрани" as a verb referring to your previous answer, you SHOULD call the tool.
 - You do NOT need to ask for confirmation like "действительно сохранить?" — if the intent is clear, just call the tool.
@@ -95,8 +99,10 @@ WHAT "THIS" MEANS
   unless the user explicitly points to a different text (for example by quoting it or pasting it again).
 
 ========================================
-HOW TO FILL ARGUMENTS
+HOW TO FILL ARGUMENTS (FULL TEXT MODE)
 ========================================
+This is the default behaviour when the user says just "сохрани это" / "save this".
+
 - body:
     - The text that should be saved.
     - By default: your previous answer, verbatim.
@@ -108,6 +114,67 @@ HOW TO FILL ARGUMENTS
 - title:
     - Optional. If easy, generate a very short title (3–8 words) summarizing the content.
     - If you are unsure or it slows you down, you MAY pass null.
+
+========================================
+EXPLICIT SUMMARY MODE ("СОХРАНИ КОНСПЕКТ")
+========================================
+Sometimes the user explicitly wants to save a SHORT SUMMARY instead of the full answer.
+This is triggered by phrases like:
+- "сохрани конспект"
+- "сделай конспект и сохрани"
+- "сделай краткий конспект и сохрани его"
+- "save a summary"
+- "save the summary version"
+
+In this case you SHOULD:
+
+1) Take your own previous long answer as the source.
+2) Create a SHORT SUMMARY of it:
+   - Aim for about 1–2 screens of text (roughly up to ~1500–2000 characters).
+   - Use bullet points, clear structure, чеклист / план действий.
+   - It should be компактным, но полезным как самостоятельная шпаргалка.
+
+3) Build body in the following STRUCTURE (very important):
+
+   Line 1:
+   [КОНСПЕКТ, НЕ ПОЛНЫЙ ТЕКСТ]
+
+   Next lines (linking to the full answer in ChatGPT):
+   Где искать полный текст:
+   Открой ChatGPT и найди диалог по этой фразе (начало оригинального ответа):
+   "<первые ~150–200 символов твоего полного ОРИГИНАЛЬНОГО ответа, ДОСЛОВНО>"
+
+   Then:
+   ---
+   Краткий конспект:
+
+   <твой сжатый конспект, чеклист или план>
+
+- That quoted “original beginning” (the first 150–200 characters of the full answer)
+  acts as a STRONG LINK: the user can find the full message in ChatGPT by visually
+  matching or searching for this phrase.
+
+- You MUST copy that original beginning faithfully, without paraphrasing.
+  It is used as a reliable anchor between the summary and the original message.
+
+- title in EXPLICIT SUMMARY MODE:
+    - You MAY hint that this is a summary, e.g.:
+        - "План пет-проекта (конспект)"
+        - "Домашняя тренировка (кратко)"
+        - "Конспект ответа про <тему>"
+    - The critical part is the [КОНСПЕКТ, НЕ ПОЛНЫЙ ТЕКСТ] marker inside body.
+
+- You MUST NOT invent or fabricate a direct URL to the chat message:
+    - You do NOT know any real shareable link for this conversation.
+    - Only mention that the full text is available in ChatGPT and that
+      the user can find it by the quoted beginning.
+
+Summary:
+- If the user literally asks to save a summary ("сохрани конспект", "save a summary"):
+    - You SHOULD build body exactly in the SUMMARY MODE structure and call ai_organiser_save
+      with that body (instead of the full raw answer).
+- If the user just says "сохрани это" / "save this" without mentioning a summary:
+    - You SHOULD save the full previous answer as-is.
 
 ========================================
 ERROR HANDLING (FOR YOU AS THE MODEL)
@@ -132,6 +199,11 @@ TOOL CALL POLICY
 - First, answer the user normally if they asked you to create or explain something.
 - If in a FOLLOW-UP message they ask to save it (using the trigger words above),
   you SHOULD call ai_organiser_save in addition to your chat response.
+- If the user explicitly asks for a summary to be saved ("сохрани конспект" / "save a summary"),
+  you SHOULD:
+    - produce a concise summary as described;
+    - build body in the SUMMARY MODE structure;
+    - call ai_organiser_save with that summary body.
 
 ========================================
 AUTH MODEL
@@ -334,7 +406,7 @@ def ai_organiser_save(
             "message_for_model": (
                 "There is no valid integration token for AI Organiser in this request. "
                 "Ask the user to connect or reconnect their AI Organiser account via "
-                "the app's OAuth / account linking flow, then try saving again. "
+                "the app's OAuth / account linking flow, then try again. "
                 "Also remind them that the full content is still available in this chat."
             ),
             "error": (
@@ -387,7 +459,7 @@ def ai_organiser_save(
                     "AI Organiser reported that the access token or integration key is "
                     "invalid or no longer accepted. Ask the user to reconnect their "
                     "AI Organiser account via the app's OAuth / account linking flow "
-                    "and then try saving again. Also remind them that the full content "
+                    "and then try again. Also remind them that the full content "
                     "is still available in this chat."
                 )
 
