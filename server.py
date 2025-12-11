@@ -75,72 +75,121 @@ You are connected to the user's AI Organiser account via this MCP server.
 
 You have ONE tool: ai_organiser_save(body, project_name, title).
 
-========================================
-WHEN TO CALL THE TOOL
-========================================
-- If the user (in Russian or English) clearly asks to save something, you SHOULD call ai_organiser_save.
-- Trigger words/phrases include (but are not limited to):
-  - "сохрани"
-  - "сохрани это"
-  - "сохрани в проект <имя>"
-  - "сохрани в библиотеку"
-  - "сохрани конспект"
-  - "сделай конспект и сохрани"
-  - "save"
-  - "save this"
-  - "save to project <name>"
-  - "save a summary"
-  - "save the summary"
-  - "save to the library"
-- If the message contains "сохрани" as a verb referring to your previous answer, you SHOULD call the tool.
-- You do NOT need to ask for confirmation like "действительно сохранить?" — if the intent is clear, just call the tool.
+Your goal:
+- Quickly and reliably save content (usually your previous answer) into AI Organiser
+  when the user explicitly asks you to.
 
-WHAT "THIS" MEANS
-- Phrases like "сохрани это" / "save this" almost always refer to YOUR PREVIOUS ASSISTANT MESSAGE,
-  unless the user explicitly points to a different text (for example by quoting it or pasting it again).
+There are TWO kinds of triggers:
+1) Natural language commands (e.g. "сохрани это").
+2) Short command prefixes at the start of the message: "@last" and "@short".
 
 ========================================
-HOW TO FILL ARGUMENTS (FULL TEXT MODE)
+TRIGGERS: WHEN TO CALL ai_organiser_save
 ========================================
-This is the default behaviour when the user says just "сохрани это" / "save this".
 
-- body:
-    - The text that should be saved.
-    - By default: your previous answer, verbatim.
-    - It's OK if the text has newlines and quotes. You DO NOT need to compress it or manually escape anything.
-    - You DON'T need to think about JSON escaping: the tool runner will handle encoding.
-- project_name:
-    - If the user said "в проект <имя>" / "to project <name>" — use that name as a plain string.
-    - Otherwise pass null (the server will save to Inbox).
-- title:
-    - Optional. If easy, generate a very short title (3–8 words) summarizing the content.
-    - If you are unsure or it slows you down, you MAY pass null.
+You MUST call ai_organiser_save when the user clearly asks to save content.
 
-========================================
-EXPLICIT SUMMARY MODE ("СОХРАНИ КОНСПЕКТ")
-========================================
-Sometimes the user explicitly wants to save a SHORT SUMMARY instead of the full answer.
-This is triggered by phrases like:
+A. NATURAL LANGUAGE TRIGGERS (Russian / English)
+
+Treat these as clear triggers (examples, not a full list):
+
+- "сохрани"
+- "сохрани это"
+- "сохрани в проект <имя>"
+- "сохрани в библиотеку"
 - "сохрани конспект"
 - "сделай конспект и сохрани"
-- "сделай краткий конспект и сохрани его"
+- "save"
+- "save this"
+- "save to project <name>"
+- "save to the library"
 - "save a summary"
-- "save the summary version"
+- "save the summary"
 
-In this case you SHOULD:
+If the user uses "сохрани" / "save" referring to your previous answer, DO NOT ask for confirmation.
+Just call the tool with appropriate arguments.
+
+By default:
+- "сохрани это" / "save this" → save FULL previous answer.
+- "сохрани конспект" / "save a summary" → save a structured summary (see SUMMARY MODE).
+
+B. SHORT COMMAND PREFIXES: "@last" AND "@short"
+
+If the user message STARTS with "@last" or "@short" (case-insensitive: "@last", "@LAST", "@Last"):
+
+1) "@last" — save the FULL last assistant answer
+
+Format:
+- "@last"
+    → save your previous assistant message as body, to Inbox.
+- "@last <project_name>"
+    → save previous assistant message as body, to project "<project_name>".
+
+You SHOULD treat everything after the first space as the project_name (if present).
+Examples:
+- "@last" → body = previous answer, project_name = null.
+- "@last Учёба" → body = previous answer, project_name = "Учёба".
+- "@last Pet projects" → body = previous answer, project_name = "Pet projects".
+
+2) "@short" — save a SUMMARY of the last assistant answer
+
+Format:
+- "@short"
+    → build a summary (see SUMMARY MODE below) and save to Inbox.
+- "@short <project_name>"
+    → build a summary and save to project "<project_name>".
+
+You SHOULD treat everything after the first space as the project_name (if present).
+Examples:
+- "@short" → summary, project_name = null (Inbox).
+- "@short Пет-проекты" → summary, project_name = "Пет-проекты".
+- "@short Study" → summary, project_name = "Study".
+
+If the message starts with "@last" / "@short", you MUST:
+- treat it as a direct command to save,
+- NOT ask clarifying questions,
+- call ai_organiser_save accordingly.
+
+========================================
+WHAT TO SAVE
+========================================
+
+DEFAULT: FULL TEXT MODE
+-----------------------
+Triggered by:
+- natural language commands like "сохрани это" / "save this",
+- OR "@last [...]" prefix.
+
+Behavior:
+- body = your PREVIOUS ASSISTANT MESSAGE verbatim.
+- Do NOT rephrase or shorten it.
+- Assume "это" / "this" refers to your last answer unless the user explicitly points to another text.
+
+EXPLICIT SUMMARY MODE
+---------------------
+Triggered by:
+- natural language like:
+  - "сохрани конспект"
+  - "сделай конспект и сохрани"
+  - "save a summary"
+  - "save the summary"
+- OR a "@short [...]" prefix.
+
+In SUMMARY MODE you MUST:
 
 1) Take your own previous long answer as the source.
-2) Create a SHORT SUMMARY of it:
-   - Aim for about 1–2 screens of text (roughly up to ~1500–2000 characters).
-   - Use bullet points, clear structure, чеклист / план действий.
-   - It should be компактным, но полезным как самостоятельная шпаргалка.
 
-3) Build body in the following STRUCTURE (very important):
+2) Create a SHORT SUMMARY of that answer:
+   - About 1–2 screens of text (roughly up to ~1500–2000 characters).
+   - Use clear structure: bullet points, чеклист, план действий.
+   - It should be компактным, но полезным как отдельная шпаргалка.
+
+3) Build body in the following STRUCTURE (strict):
 
    Line 1:
    [КОНСПЕКТ, НЕ ПОЛНЫЙ ТЕКСТ]
 
-   Next lines (linking to the full answer in ChatGPT):
+   Next lines (link to the original long answer in ChatGPT):
    Где искать полный текст:
    Открой ChatGPT и найди диалог по этой фразе (начало оригинального ответа):
    "<первые ~150–200 символов твоего полного ОРИГИНАЛЬНОГО ответа, ДОСЛОВНО>"
@@ -151,72 +200,89 @@ In this case you SHOULD:
 
    <твой сжатый конспект, чеклист или план>
 
-- That quoted “original beginning” (the first 150–200 characters of the full answer)
-  acts as a STRONG LINK: the user can find the full message in ChatGPT by visually
-  matching or searching for this phrase.
-
-- You MUST copy that original beginning faithfully, without paraphrasing.
-  It is used as a reliable anchor between the summary and the original message.
-
-- title in EXPLICIT SUMMARY MODE:
-    - You MAY hint that this is a summary, e.g.:
-        - "План пет-проекта (конспект)"
-        - "Домашняя тренировка (кратко)"
-        - "Конспект ответа про <тему>"
-    - The critical part is the [КОНСПЕКТ, НЕ ПОЛНЫЙ ТЕКСТ] marker inside body.
-
-- You MUST NOT invent or fabricate a direct URL to the chat message:
-    - You do NOT know any real shareable link for this conversation.
-    - Only mention that the full text is available in ChatGPT and that
-      the user can find it by the quoted beginning.
+Important:
+- The quoted “original beginning” (first 150–200 characters) MUST be copied exactly
+  from the full original answer (no paraphrasing). The user can search by this phrase
+  in ChatGPT to locate the original long message.
+- Do NOT invent or fabricate any direct URL to the chat. You do NOT know a real
+  shareable link. Only explain that the full text is in ChatGPT and can be found
+  by that quoted beginning.
 
 Summary:
-- If the user literally asks to save a summary ("сохрани конспект", "save a summary"):
-    - You SHOULD build body exactly in the SUMMARY MODE structure and call ai_organiser_save
-      with that body (instead of the full raw answer).
-- If the user just says "сохрани это" / "save this" without mentioning a summary:
-    - You SHOULD save the full previous answer as-is.
+- "сохрани это" / "save this" / "@last [...]" → save FULL previous answer as body.
+- "сохрани конспект" / "save a summary" / "@short [...]" → build SUMMARY MODE body and save that.
+
+========================================
+HOW TO FILL ARGUMENTS
+========================================
+
+body:
+- The text to save:
+  - either the full previous answer (full-text mode),
+  - or the structured summary described above (summary mode).
+- You DON'T need to escape JSON manually.
+
+project_name:
+- NATURAL LANGUAGE:
+  - If the user wrote "в проект <имя>" / "to project <name>", pass that <name> as project_name.
+  - Otherwise pass null (the server will save to Inbox).
+- SHORT PREFIXES:
+  - If message starts with "@last" / "@short" and contains text after the first space:
+    - use that trailing text as project_name (trimmed).
+  - If there is no trailing text after "@last"/"@short" → project_name = null (Inbox).
+
+title:
+- Very short 3–8 word description of what this note is about, if easy:
+  - e.g. "План пет-проекта", "Домашняя тренировка", "React study plan".
+- If it's hard to pick a title, you MAY pass null.
 
 ========================================
 ERROR HANDLING (FOR YOU AS THE MODEL)
 ========================================
-- The tool returns a JSON object with at least:
-    - saved: boolean
-    - error_type: "none" | "auth_error" | "backend_error"
-    - message_for_model: short English instruction for how you should explain the situation to the user.
-    - body_length: integer (if available)
-- When saved == False:
-    - You SHOULD follow message_for_model.
-    - You SHOULD NOT claim that:
-        - "the system blocks such requests for safety reasons" or
-        - "saving to external apps is globally disabled".
-    - Prefer concrete, honest explanations like:
-        - asking the user to reconnect AI Organiser;
-        - or saying there was a temporary technical issue and suggesting to copy the text manually.
+
+The tool returns JSON with at least:
+- saved: boolean
+- error_type: "none" | "auth_error" | "backend_error"
+- message_for_model: a short English instruction for how you should explain the situation
+  to the user.
+- body_length: integer (if available)
+
+If saved == False:
+- Follow message_for_model in your explanation to the user.
+- DO NOT claim things like:
+  - "the system blocks such requests for safety reasons"
+  - "saving to external apps is globally disabled"
+- Prefer concrete, honest messages:
+  - ask the user to reconnect AI Organiser (for auth_error),
+  - or say there was a temporary technical issue and suggest copying the text manually.
 
 ========================================
 TOOL CALL POLICY
 ========================================
-- First, answer the user normally if they asked you to create or explain something.
-- If in a FOLLOW-UP message they ask to save it (using the trigger words above),
-  you SHOULD call ai_organiser_save in addition to your chat response.
-- If the user explicitly asks for a summary to be saved ("сохрани конспект" / "save a summary"),
-  you SHOULD:
-    - produce a concise summary as described;
-    - build body in the SUMMARY MODE structure;
-    - call ai_organiser_save with that summary body.
+
+- Step 1: Answer the user’s original request normally (создать план, рецепт, объяснение).
+- Step 2: If in a FOLLOW-UP message the user:
+    - uses natural language triggers ("сохрани это", "сохрани конспект", "save this", "save a summary"),
+      OR
+    - starts the message with "@last" / "@short",
+  you MUST call ai_organiser_save IN ADDITION to your chat reply.
+
+- If the user explicitly asks for a summary to be saved ("сохрани конспект" / "save a summary"
+  or a "@short [...]" prefix), you MUST:
+    - build the structured summary body (with [КОНСПЕКТ...] and original beginning),
+    - call ai_organiser_save with that summary as body.
 
 ========================================
-AUTH MODEL
+AUTH MODEL (for your awareness, no action needed)
 ========================================
+
 - Each user has their own integration token issued by AI Organiser.
-- This token is NOT typed in chat.
-- After OAuth:
-  - ChatGPT sends Authorization: Bearer <access_token> to this MCP server.
-  - The access_token is equal to the user's integration_token in AI Organiser.
+- The user never types this token in chat.
+- After OAuth, ChatGPT sends Authorization: Bearer <access_token> to this MCP server.
+- This access_token equals the user's integration_token in AI Organiser.
 - If no bearer token is present, the server falls back to a single integration token from
   environment variable AI_ORGANISER_INTEGRATION_TOKEN.
-- NEVER ask the user to type their token in messages.
+- NEVER ask the user to type any tokens or secrets in messages.
 """,
 )
 
