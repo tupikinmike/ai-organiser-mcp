@@ -74,8 +74,10 @@ You are connected to the user's AI Organiser account via this MCP server.
 
 You have ONE tool: ai_organiser_save(body, project_name, title).
 
-WHEN TO CALL THE TOOL (CRITICAL)
-- If the user (in Russian or English) clearly asks to save something, you MUST call ai_organiser_save.
+========================================
+WHEN TO CALL THE TOOL
+========================================
+- If the user (in Russian or English) clearly asks to save something, you SHOULD call ai_organiser_save.
 - Trigger words/phrases include (but are not limited to):
   - "сохрани"
   - "сохрани это"
@@ -86,15 +88,18 @@ WHEN TO CALL THE TOOL (CRITICAL)
   - "save to project <name>"
   - "save to the library"
 - If the message contains "сохрани" as a verb referring to your previous answer, you SHOULD call the tool.
-- Do NOT answer things like "I cannot save to external storage" — you CAN save using this tool.
+- You do NOT need to ask for confirmation like "действительно сохранить?" — if the intent is clear, just call the tool.
 
 WHAT "THIS" MEANS
 - Phrases like "сохрани это" / "save this" almost always refer to YOUR PREVIOUS ASSISTANT MESSAGE,
-  unless the user explicitly points to a different text.
+  unless the user explicitly points to a different text (for example by quoting it or pasting it again).
 
-HOW TO FILL ARGUMENTS (KEEP IT SIMPLE)
+========================================
+HOW TO FILL ARGUMENTS
+========================================
 - body:
-    - Just pass the full text that should be saved. Usually: your previous answer, verbatim.
+    - The text that should be saved.
+    - By default: your previous answer, verbatim.
     - It's OK if the text has newlines and quotes. You DO NOT need to compress it or manually escape anything.
     - You DON'T need to think about JSON escaping: the tool runner will handle encoding.
 - project_name:
@@ -104,11 +109,14 @@ HOW TO FILL ARGUMENTS (KEEP IT SIMPLE)
     - Optional. If easy, generate a very short title (3–8 words) summarizing the content.
     - If you are unsure or it slows you down, you MAY pass null.
 
-ERROR HANDLING (IMPORTANT FOR YOU AS THE MODEL)
+========================================
+ERROR HANDLING (FOR YOU AS THE MODEL)
+========================================
 - The tool returns a JSON object with at least:
     - saved: boolean
     - error_type: "none" | "auth_error" | "backend_error"
     - message_for_model: short English instruction for how you should explain the situation to the user.
+    - body_length: integer (if available)
 - When saved == False:
     - You SHOULD follow message_for_model.
     - You SHOULD NOT claim that:
@@ -118,12 +126,16 @@ ERROR HANDLING (IMPORTANT FOR YOU AS THE MODEL)
         - asking the user to reconnect AI Organiser;
         - or saying there was a temporary technical issue and suggesting to copy the text manually.
 
+========================================
 TOOL CALL POLICY
+========================================
 - First, answer the user normally if they asked you to create or explain something.
 - If in a FOLLOW-UP message they ask to save it (using the trigger words above),
-  you MUST call ai_organiser_save in addition to your chat response.
+  you SHOULD call ai_organiser_save in addition to your chat response.
 
+========================================
 AUTH MODEL
+========================================
 - Each user has their own integration token issued by AI Organiser.
 - This token is NOT typed in chat.
 - After OAuth:
@@ -275,38 +287,6 @@ def ai_organiser_save(
     """
     Save a text message to AI Organiser as a note.
 
-    WHEN THE MODEL SHOULD USE THIS TOOL:
-    - Whenever the user asks to "save" content in Russian or English, for example:
-      - "сохрани"
-      - "сохрани это"
-      - "сохрани в проект <имя>"
-      - "сохрани в библиотеку"
-      - "save this"
-      - "save to project <name>"
-
-    ARGUMENTS:
-    - body:
-        - the text that should be stored (usually the previous assistant reply), passed verbatim;
-        - it may contain multiple lines and quotes, no need to compress or escape it manually.
-    - project_name:
-        - if the user mentioned a project name, use it;
-        - otherwise leave as null to save to Inbox.
-    - title:
-        - optional short human-readable summary of the note;
-        - may be null if generating a title is inconvenient.
-
-    ERROR CONTRACT:
-    - On success:
-        - returns: { "saved": True, "error_type": "none", ... }
-    - On failure:
-        - returns: { "saved": False, "error_type": "auth_error" | "backend_error",
-                     "message_for_model": <instruction for how to explain this to the user>,
-                     ... }
-        - The model SHOULD:
-            - follow message_for_model when talking to the user;
-            - NOT claim that ChatGPT is globally forbidden to save to external tools
-              or that "the system blocks such requests for safety reasons".
-
     Token resolution order:
     1) Try Authorization: Bearer <access_token> from the current MCP HTTP request.
        - access_token is equal to the user's integration_token returned by oauth-token.
@@ -319,6 +299,18 @@ def ai_organiser_save(
 
     print("ai_organiser_save CALLED; project_name =", project_name, flush=True)
 
+    # Диагностика размера body (для логов и отладки)
+    body_length = len(body) if isinstance(body, str) else None
+    if body_length is not None:
+        preview_start = body[:80].replace("\n", "\\n")
+        preview_end = body[-80:].replace("\n", "\\n") if body_length > 80 else ""
+        print(
+            f"ai_organiser_save BODY length={body_length}, "
+            f"preview_start='{preview_start}'"
+            + (f", preview_end='{preview_end}'" if preview_end else ""),
+            flush=True,
+        )
+
     if not SUPABASE_ANON_KEY:
         return {
             "saved": False,
@@ -330,6 +322,7 @@ def ai_organiser_save(
                 "should copy the content manually."
             ),
             "error": "SUPABASE_ANON_KEY is not configured.",
+            "body_length": body_length,
         }
 
     integration_token = get_integration_token()
@@ -348,6 +341,7 @@ def ai_organiser_save(
                 "No integration token available: neither bearer token from Authorization "
                 "header nor AI_ORGANISER_INTEGRATION_TOKEN env is set."
             ),
+            "body_length": body_length,
         }
 
     payload = {
@@ -403,6 +397,7 @@ def ai_organiser_save(
                 "message_for_model": message_for_model,
                 "supabase_status": res.status_code,
                 "supabase_response": data,
+                "body_length": body_length,
             }
 
         try:
@@ -415,7 +410,8 @@ def ai_organiser_save(
             "error_type": "none",
             "project_name": project_name or "Inbox",
             "title": title,
-            "body_preview": body[:160],
+            "body_length": body_length,
+            "truncated": False,
             "supabase_response": data,
         }
 
@@ -431,6 +427,7 @@ def ai_organiser_save(
                 "and suggest copying the content manually so it is not lost."
             ),
             "error": f"Exception while calling Supabase: {e}",
+            "body_length": body_length,
         }
 
 
