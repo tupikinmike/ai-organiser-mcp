@@ -1,4 +1,5 @@
 import os
+import time
 import httpx
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
@@ -349,6 +350,9 @@ SUPABASE_ANON_KEY = (
     "0l394mJ9cLNN_QxNl9DKzdw1ni_-SBawGzoSrchNcJI"
 )
 
+# Глобальный httpx-клиент для переиспользования соединений
+supabase_client = httpx.Client(timeout=10.0)
+
 
 @mcp.tool
 def ai_organiser_save(
@@ -369,6 +373,7 @@ def ai_organiser_save(
     - If project_name is provided -> send it as 'project'.
     """
 
+    tool_start = time.monotonic()
     print("ai_organiser_save CALLED; project_name =", project_name, flush=True)
 
     # Диагностика размера body (для логов и отладки)
@@ -384,6 +389,11 @@ def ai_organiser_save(
         )
 
     if not SUPABASE_ANON_KEY:
+        total_elapsed = time.monotonic() - tool_start
+        print(
+            f"ai_organiser_save EARLY EXIT (no anon key), total {total_elapsed:.3f}s",
+            flush=True,
+        )
         return {
             "saved": False,
             "error_type": "backend_error",
@@ -400,6 +410,11 @@ def ai_organiser_save(
     integration_token = get_integration_token()
 
     if not integration_token:
+        total_elapsed = time.monotonic() - tool_start
+        print(
+            f"ai_organiser_save EARLY EXIT (no integration token), total {total_elapsed:.3f}s",
+            flush=True,
+        )
         return {
             "saved": False,
             "error_type": "auth_error",
@@ -432,8 +447,14 @@ def ai_organiser_save(
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
-            res = client.post(SUPABASE_FUNCTION_URL, json=payload, headers=headers)
+        supabase_start = time.monotonic()
+        res = supabase_client.post(SUPABASE_FUNCTION_URL, json=payload, headers=headers)
+        supabase_elapsed = time.monotonic() - supabase_start
+        print(
+            f"Supabase quick-add HTTP call took {supabase_elapsed:.3f}s "
+            f"(status={res.status_code})",
+            flush=True,
+        )
 
         if res.status_code >= 400:
             try:
@@ -463,6 +484,12 @@ def ai_organiser_save(
                     "is still available in this chat."
                 )
 
+            total_elapsed = time.monotonic() - tool_start
+            print(
+                f"ai_organiser_save FINISHED with error, total {total_elapsed:.3f}s",
+                flush=True,
+            )
+
             return {
                 "saved": False,
                 "error_type": error_type,
@@ -477,6 +504,12 @@ def ai_organiser_save(
         except Exception:
             data = res.text
 
+        total_elapsed = time.monotonic() - tool_start
+        print(
+            f"ai_organiser_save SUCCESS, total {total_elapsed:.3f}s",
+            flush=True,
+        )
+
         return {
             "saved": True,
             "error_type": "none",
@@ -489,7 +522,11 @@ def ai_organiser_save(
 
     except Exception as e:
         # Сетевые/прочие исключения
-        print("Exception while calling Supabase:", repr(e), flush=True)
+        total_elapsed = time.monotonic() - tool_start
+        print(
+            f"Exception while calling Supabase: {repr(e)}, total {total_elapsed:.3f}s",
+            flush=True,
+        )
         return {
             "saved": False,
             "error_type": "backend_error",
